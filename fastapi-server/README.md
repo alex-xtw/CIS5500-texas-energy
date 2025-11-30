@@ -13,11 +13,28 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Configure environment variables:
+3. Create and configure environment variables:
+
+Create a `.env` file in the `fastapi-server` directory:
 ```bash
 cp .env.example .env
-# Edit .env with your database credentials if needed
 ```
+
+Then edit the `.env` file with your database credentials:
+```
+DB_HOST=your_database_host
+DB_PORT=5432
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
+DB_NAME=your_database_name
+```
+
+**Required fields:**
+- `DB_HOST` - Your PostgreSQL database host address
+- `DB_PORT` - Database port (default: 5432)
+- `DB_USER` - Database username
+- `DB_PASSWORD` - Database password
+- `DB_NAME` - Database name
 
 4. Run the server:
 ```bash
