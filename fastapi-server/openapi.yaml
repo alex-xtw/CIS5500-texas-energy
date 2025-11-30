@@ -1,0 +1,795 @@
+openapi: 3.0.3
+info:
+  title: ERCOT Regional Load Data API
+  description: API for retrieving aggregated electricity demand data across ERCOT regions
+  version: 1.0.0
+
+paths:
+  /load/hourly:
+    get:
+      summary: Get hourly aggregated load data
+      description: |
+        Retrieves hourly electricity demand data aggregated across all ERCOT regions.
+        Returns time-series data showing regional load trends ordered chronologically.
+      operationId: getHourlyLoad
+      tags:
+        - Load Data
+      parameters:
+        - name: start_date
+          in: query
+          description: Start date
+          required: false
+          schema:
+            type: string
+            format: date-time
+            example: "2024-01-01T00:00:00Z"
+        - name: end_date
+          in: query
+          description: End date
+          required: false
+          schema:
+            type: string
+            format: date-time
+            example: "2024-01-31T23:59:59Z"
+        - name: limit
+          in: query
+          description: Maximum number of records to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1000
+        - name: offset
+          in: query
+          description: Number of records to skip for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Successful response with hourly load data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HourlyLoadData'
+              examples:
+                success:
+                  value:
+                    - hour_end: "2024-01-01T01:00:00Z"
+                      coast: 5432.5
+                      east: 8765.2
+                      far_west: 2341.8
+                      north: 6789.4
+                      north_c: 7654.3
+                      southern: 9876.1
+                      south_c: 8765.4
+                      west: 4321.9
+                      ercot: 53946.6
+                    - hour_end: "2024-01-01T02:00:00Z"
+                      coast: 5123.4
+                      east: 8234.5
+                      far_west: 2198.7
+                      north: 6345.2
+                      north_c: 7234.5
+                      southern: 9345.6
+                      south_c: 8234.5
+                      west: 4098.3
+                      ercot: 50814.7
+
+  /forecast/metrics:
+    get:
+      summary: Get forecast accuracy metrics by region
+      description: |
+        Retrieves statistical metrics comparing forecasted vs actual electricity demand
+        for each ERCOT region, including MSE, MAE, MAPE, and R-squared values.
+        Optionally filter by specific region(s) and metric type(s).
+      operationId: getForecastMetrics
+      tags:
+        - Forecast
+      parameters:
+        - name: region
+          in: query
+          description: Filter results by specific region(s). Can specify multiple regions as comma-separated values.
+          required: false
+          schema:
+            type: string
+            example: "coast,east"
+          explode: false
+          style: form
+        - name: metric
+          in: query
+          description: Filter to return only specific metric(s). Can specify multiple metrics as comma-separated values.
+          required: false
+          schema:
+            type: string
+            enum:
+              - mse
+              - mae
+              - mape_pct
+              - r2
+            example: "mae,mape_pct"
+          explode: false
+          style: form
+      responses:
+        '200':
+          description: Successful response with forecast accuracy metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ForecastMetrics'
+              examples:
+                success:
+                  value:
+                    - region: "coast"
+                      n: 8760
+                      mse: 12345.67
+                      mae: 89.12
+                      mape_pct: 2.45
+                      r2: 0.9823
+                    - region: "east"
+                      n: 8760
+                      mse: 15678.90
+                      mae: 102.34
+                      mape_pct: 2.78
+                      r2: 0.9765
+                    - region: "ercot"
+                      n: 8760
+                      mse: 98765.43
+                      mae: 234.56
+                      mape_pct: 1.89
+                      r2: 0.9901
+
+  /weather/heatwaves:
+    get:
+      summary: Get heatwave streaks by ERCOT zone
+      description: |
+        Identifies heatwave periods (consecutive days with max temp >= threshold) for ERCOT zones.
+        Returns streak start/end dates, duration, and average peak load during each heatwave.
+      operationId: getHeatwaveStreaks
+      tags:
+        - Weather Analysis
+      parameters:
+        - name: zone
+          in: query
+          description: Filter by specific ERCOT zone(s). Comma-separated for multiple zones.
+          required: false
+          schema:
+            type: string
+            example: "coast,east"
+          explode: false
+          style: form
+        - name: min_temp_f
+          in: query
+          description: Minimum temperature threshold in Fahrenheit for heatwave definition
+          required: false
+          schema:
+            type: number
+            format: double
+            default: 100.0
+            example: 100.0
+        - name: min_days
+          in: query
+          description: Minimum consecutive days required to qualify as a heatwave
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 3
+            example: 3
+        - name: start_date
+          in: query
+          description: Filter heatwaves starting on or after this date
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: end_date
+          in: query
+          description: Filter heatwaves ending on or before this date
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-12-31"
+      responses:
+        '200':
+          description: Successful response with heatwave streak data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HeatwaveStreak'
+              examples:
+                success:
+                  value:
+                    - zone_code: "coast"
+                      streak_start: "2024-07-15"
+                      streak_end: "2024-07-19"
+                      streak_days: 5
+                      max_temp_f: 104.3
+                      avg_peak_load_mw: 6543.2
+                    - zone_code: "west"
+                      streak_start: "2024-08-01"
+                      streak_end: "2024-08-04"
+                      streak_days: 4
+                      max_temp_f: 108.7
+                      avg_peak_load_mw: 5234.8
+
+  /weather/precipitation:
+    get:
+      summary: Compare electricity load on rainy vs. dry days by zone
+      description: |
+        Analyzes the impact of precipitation on electricity demand by comparing average
+        daily load on rainy days versus dry days for each ERCOT zone. A rainy day is
+        defined as any day with precipitation > 0mm.
+      operationId: getPrecipitationLoadImpact
+      tags:
+        - Weather Analysis
+      parameters:
+        - name: zone
+          in: query
+          description: Filter by specific ERCOT zone(s). Comma-separated for multiple zones.
+          required: false
+          schema:
+            type: string
+            example: "coast,north"
+          explode: false
+          style: form
+        - name: start_date
+          in: query
+          description: Start date for analysis period
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: end_date
+          in: query
+          description: End date for analysis period
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-12-31"
+      responses:
+        '200':
+          description: Successful response with precipitation impact analysis
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PrecipitationImpact'
+              examples:
+                success:
+                  value:
+                    - zone_code: "coast"
+                      rainy_day: true
+                      avg_load_mw: 5234.8
+                      num_days: 87
+                    - zone_code: "coast"
+                      rainy_day: false
+                      avg_load_mw: 5789.3
+                      num_days: 278
+                    - zone_code: "east"
+                      rainy_day: true
+                      avg_load_mw: 8012.4
+                      num_days: 95
+                    - zone_code: "east"
+                      rainy_day: false
+                      avg_load_mw: 8456.7
+                      num_days: 270
+
+  /load/peak-load-extreme-heat:
+    get:
+      summary: Get median peak load during extreme heat days by zone
+      description: |
+        Analyzes electricity demand on the hottest days by calculating the median daily
+        peak load for extreme heat conditions. Extreme heat is defined by a temperature
+        percentile threshold (default: 99th percentile, representing the top 1% hottest days).
+        Returns the median peak load, threshold temperature, and number of extreme heat days.
+      operationId: getPeakLoadExtremeHeat
+      tags:
+        - Load Data
+      parameters:
+        - name: zone
+          in: query
+          description: Filter by specific ERCOT zone. If omitted, returns data for all zones.
+          required: false
+          schema:
+            type: string
+            example: "coast"
+            enum:
+              - coast
+              - east
+              - far_west
+              - north
+              - north_c
+              - southern
+              - south_c
+              - west
+        - name: start_date
+          in: query
+          description: Start date for analysis period (UTC)
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: end_date
+          in: query
+          description: End date for analysis period (UTC)
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-12-31"
+        - name: threshold
+          in: query
+          description: Percentile threshold for defining extreme heat (0-100). Default is 99 (top 1% hottest days).
+          required: false
+          schema:
+            type: number
+            format: double
+            minimum: 0
+            maximum: 100
+            default: 99
+            example: 99
+      responses:
+        '200':
+          description: Successful response with extreme heat peak load statistics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExtremeHeatLoad'
+              examples:
+                success:
+                  value:
+                    - zone_code: "coast"
+                      median_peak_load_mw: 6543.2
+                      num_extreme_heat_days: 18
+                      threshold_percentile: 99
+                      threshold_temp_f: 98.5
+                    - zone_code: "east"
+                      median_peak_load_mw: 9234.7
+                      num_extreme_heat_days: 15
+                      threshold_percentile: 99
+                      threshold_temp_f: 101.2
+                    - zone_code: "west"
+                      median_peak_load_mw: 5123.4
+                      num_extreme_heat_days: 20
+                      threshold_percentile: 99
+                      threshold_temp_f: 105.8
+
+  /load/outliers/weather-conditions:
+    get:
+      summary: Analyze weather conditions on load outlier days
+      description: |
+        Identifies days with unusually high or low electricity demand (outliers defined as
+        daily average load beyond ±N standard deviations from the monthly mean) and analyzes
+        the average weather conditions on those outlier days. Returns monthly statistics
+        showing the number of outlier days and mean weather metrics for high and low outliers.
+      operationId: getLoadOutliersWeatherConditions
+      tags:
+        - Load Data
+      parameters:
+        - name: start_date
+          in: query
+          description: Start date for analysis period (UTC)
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: end_date
+          in: query
+          description: End date for analysis period (UTC)
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2024-12-31"
+        - name: month
+          in: query
+          description: Filter to specific month(s). Can specify multiple months as comma-separated values (YYYY-MM format).
+          required: false
+          schema:
+            type: string
+            example: "2024-07,2024-08"
+          explode: false
+          style: form
+        - name: outlier_type
+          in: query
+          description: Filter by outlier type (high or low). If omitted, returns both types.
+          required: false
+          schema:
+            type: string
+            enum:
+              - high
+              - low
+            example: "high"
+        - name: std_dev_threshold
+          in: query
+          description: Standard deviation threshold for defining outliers. Default is 3 (±3 standard deviations).
+          required: false
+          schema:
+            type: number
+            format: double
+            minimum: 1
+            maximum: 5
+            default: 3
+            example: 3
+      responses:
+        '200':
+          description: Successful response with outlier weather analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LoadOutlierWeather'
+                  metadata:
+                    type: object
+                    properties:
+                      std_dev_threshold:
+                        type: number
+                        format: double
+                        example: 3
+                      description:
+                        type: string
+                        example: "Outliers defined as days with average load beyond ±3 standard deviations from monthly mean"
+              examples:
+                success:
+                  value:
+                    data:
+                      - month_start: "2024-07-01"
+                        outlier_group: "high"
+                        num_days: 5
+                        avg_temp_c: 38.5
+                        avg_rh_pct: 65.2
+                        avg_precip_mm: 0.5
+                        avg_wind_kmh: 12.3
+                        avg_pressure_hpa: 1013.2
+                        avg_cloud_cover_pct: 45.6
+                      - month_start: "2024-07-01"
+                        outlier_group: "low"
+                        num_days: 2
+                        avg_temp_c: 18.2
+                        avg_rh_pct: 78.9
+                        avg_precip_mm: 15.3
+                        avg_wind_kmh: 8.7
+                        avg_pressure_hpa: 1008.5
+                        avg_cloud_cover_pct: 82.1
+                    metadata:
+                      std_dev_threshold: 3
+                      description: "Outliers defined as days with average load beyond ±3 standard deviations from monthly mean"
+
+components:
+  schemas:
+    HourlyLoadData:
+      type: object
+      description: Aggregated hourly electricity load data for all ERCOT regions
+      properties:
+        hour_end:
+          type: string
+          format: date-time
+          description: Timestamp marking the end of the hourly period
+          example: "2024-01-01T01:00:00Z"
+        coast:
+          type: number
+          format: double
+          description: Total electricity demand for Coast region (MW)
+          example: 5432.5
+        east:
+          type: number
+          format: double
+          description: Total electricity demand for East region (MW)
+          example: 8765.2
+        far_west:
+          type: number
+          format: double
+          description: Total electricity demand for Far West region (MW)
+          example: 2341.8
+        north:
+          type: number
+          format: double
+          description: Total electricity demand for North region (MW)
+          example: 6789.4
+        north_c:
+          type: number
+          format: double
+          description: Total electricity demand for North Central region (MW)
+          example: 7654.3
+        southern:
+          type: number
+          format: double
+          description: Total electricity demand for Southern region (MW)
+          example: 9876.1
+        south_c:
+          type: number
+          format: double
+          description: Total electricity demand for South Central region (MW)
+          example: 8765.4
+        west:
+          type: number
+          format: double
+          description: Total electricity demand for West region (MW)
+          example: 4321.9
+        ercot:
+          type: number
+          format: double
+          description: Total electricity demand across entire ERCOT system (MW)
+          example: 53946.6
+      required:
+        - hour_end
+        - coast
+        - east
+        - far_west
+        - north
+        - north_c
+        - southern
+        - south_c
+        - west
+        - ercot
+
+    ForecastMetrics:
+      type: object
+      description: Statistical metrics comparing forecasted vs actual electricity demand for a region
+      properties:
+        region:
+          type: string
+          description: ERCOT region name
+          example: "coast"
+          enum:
+            - coast
+            - east
+            - far_west
+            - north
+            - north_c
+            - southern
+            - south_c
+            - west
+            - ercot
+        n:
+          type: integer
+          description: Number of data points used in the calculation
+          example: 8760
+        mse:
+          type: number
+          format: double
+          description: Mean Squared Error between actual and forecasted values
+          example: 12345.67
+        mae:
+          type: number
+          format: double
+          description: Mean Absolute Error between actual and forecasted values
+          example: 89.12
+        mape_pct:
+          type: number
+          format: double
+          description: Mean Absolute Percentage Error (as percentage)
+          example: 2.45
+        r2:
+          type: number
+          format: double
+          description: R-squared (coefficient of determination) value
+          example: 0.9823
+          minimum: -1
+          maximum: 1
+      required:
+        - region
+        - n
+        - mse
+        - mae
+        - mape_pct
+        - r2
+
+    HeatwaveStreak:
+      type: object
+      description: Represents a heatwave period with consecutive hot days and associated load data
+      properties:
+        zone_code:
+          type: string
+          description: ERCOT zone code
+          example: "coast"
+          enum:
+            - coast
+            - east
+            - far_west
+            - north
+            - north_c
+            - southern
+            - south_c
+            - west
+        streak_start:
+          type: string
+          format: date
+          description: Start date of the heatwave streak
+          example: "2024-07-15"
+        streak_end:
+          type: string
+          format: date
+          description: End date of the heatwave streak
+          example: "2024-07-19"
+        streak_days:
+          type: integer
+          description: Number of consecutive days in the heatwave
+          example: 5
+          minimum: 1
+        max_temp_f:
+          type: number
+          format: double
+          description: Maximum temperature reached during the heatwave (Fahrenheit)
+          example: 104.3
+        avg_peak_load_mw:
+          type: number
+          format: double
+          description: Average daily peak load during the heatwave period (MW)
+          example: 6543.2
+      required:
+        - zone_code
+        - streak_start
+        - streak_end
+        - streak_days
+        - max_temp_f
+        - avg_peak_load_mw
+
+    PrecipitationImpact:
+      type: object
+      description: Comparison of average electricity load on rainy vs. dry days for a zone
+      properties:
+        zone_code:
+          type: string
+          description: ERCOT zone code
+          example: "coast"
+          enum:
+            - coast
+            - east
+            - far_west
+            - north
+            - north_c
+            - southern
+            - south_c
+            - west
+        rainy_day:
+          type: boolean
+          description: Whether this row represents rainy days (true) or dry days (false)
+          example: true
+        avg_load_mw:
+          type: number
+          format: double
+          description: Average daily electricity load for this weather condition (MW)
+          example: 5234.8
+        num_days:
+          type: integer
+          description: Number of days in the dataset with this weather condition
+          example: 87
+          minimum: 0
+      required:
+        - zone_code
+        - rainy_day
+        - avg_load_mw
+        - num_days
+
+    ExtremeHeatLoad:
+      type: object
+      description: Median peak electricity load statistics for extreme heat days in an ERCOT zone
+      properties:
+        zone_code:
+          type: string
+          description: ERCOT zone code
+          example: "coast"
+          enum:
+            - coast
+            - east
+            - far_west
+            - north
+            - north_c
+            - southern
+            - south_c
+            - west
+        median_peak_load_mw:
+          type: number
+          format: double
+          description: Median of daily peak electricity load during extreme heat days (MW)
+          example: 6543.2
+        num_extreme_heat_days:
+          type: integer
+          description: Number of days that qualified as extreme heat within the analysis period
+          example: 18
+          minimum: 0
+        threshold_percentile:
+          type: number
+          format: double
+          description: The percentile threshold used to define extreme heat
+          example: 99
+          minimum: 0
+          maximum: 100
+        threshold_temp_f:
+          type: number
+          format: double
+          description: The temperature threshold in Fahrenheit corresponding to the percentile
+          example: 98.5
+      required:
+        - zone_code
+        - median_peak_load_mw
+        - num_extreme_heat_days
+        - threshold_percentile
+        - threshold_temp_f
+
+    LoadOutlierWeather:
+      type: object
+      description: Weather conditions and statistics for days with outlier electricity load
+      properties:
+        month_start:
+          type: string
+          format: date
+          description: Start date of the month (YYYY-MM-01)
+          example: "2024-07-01"
+        outlier_group:
+          type: string
+          description: Type of outlier - high (above mean + N*σ) or low (below mean - N*σ)
+          enum:
+            - high
+            - low
+          example: "high"
+        num_days:
+          type: integer
+          description: Number of outlier days in this month and group
+          example: 5
+          minimum: 0
+        avg_temp_c:
+          type: number
+          format: double
+          description: Average temperature in Celsius across outlier days
+          example: 38.5
+        avg_rh_pct:
+          type: number
+          format: double
+          description: Average relative humidity percentage across outlier days
+          example: 65.2
+        avg_precip_mm:
+          type: number
+          format: double
+          description: Average daily precipitation in millimeters across outlier days
+          example: 0.5
+        avg_wind_kmh:
+          type: number
+          format: double
+          description: Average wind speed in km/h across outlier days
+          example: 12.3
+        avg_pressure_hpa:
+          type: number
+          format: double
+          description: Average atmospheric pressure in hPa across outlier days
+          example: 1013.2
+        avg_cloud_cover_pct:
+          type: number
+          format: double
+          description: Average cloud cover percentage across outlier days
+          example: 45.6
+      required:
+        - month_start
+        - outlier_group
+        - num_days
+        - avg_temp_c
+        - avg_rh_pct
+        - avg_precip_mm
+        - avg_wind_kmh
+        - avg_pressure_hpa
+        - avg_cloud_cover_pct
+
