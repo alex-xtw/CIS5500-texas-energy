@@ -123,6 +123,27 @@ class LoadOutlierWeatherResponse(BaseModel):
     data: List[LoadOutlierWeather]
     metadata: dict = Field(description="Metadata about the analysis parameters")
 
+class LoadComparison(BaseModel):
+    hour_end: datetime = Field(description="Timestamp marking the end of the hourly period")
+    coast_actual: Optional[float] = Field(None, description="Actual electricity demand for Coast region (MW)")
+    coast_expected: Optional[float] = Field(None, description="Expected electricity demand for Coast region (MW)")
+    east_actual: Optional[float] = Field(None, description="Actual electricity demand for East region (MW)")
+    east_expected: Optional[float] = Field(None, description="Expected electricity demand for East region (MW)")
+    far_west_actual: Optional[float] = Field(None, description="Actual electricity demand for Far West region (MW)")
+    far_west_expected: Optional[float] = Field(None, description="Expected electricity demand for Far West region (MW)")
+    north_actual: Optional[float] = Field(None, description="Actual electricity demand for North region (MW)")
+    north_expected: Optional[float] = Field(None, description="Expected electricity demand for North region (MW)")
+    north_c_actual: Optional[float] = Field(None, description="Actual electricity demand for North Central region (MW)")
+    north_c_expected: Optional[float] = Field(None, description="Expected electricity demand for North Central region (MW)")
+    southern_actual: Optional[float] = Field(None, description="Actual electricity demand for Southern region (MW)")
+    southern_expected: Optional[float] = Field(None, description="Expected electricity demand for Southern region (MW)")
+    south_c_actual: Optional[float] = Field(None, description="Actual electricity demand for South Central region (MW)")
+    south_c_expected: Optional[float] = Field(None, description="Expected electricity demand for South Central region (MW)")
+    west_actual: Optional[float] = Field(None, description="Actual electricity demand for West region (MW)")
+    west_expected: Optional[float] = Field(None, description="Expected electricity demand for West region (MW)")
+    ercot_actual: Optional[float] = Field(None, description="Actual total electricity demand across entire ERCOT system (MW)")
+    ercot_expected: Optional[float] = Field(None, description="Expected total electricity demand across entire ERCOT system (MW)")
+
 # API Endpoints
 @app.get("/load/hourly", response_model=List[HourlyLoadData], tags=["Load Data"])
 def get_hourly_load(
@@ -164,26 +185,112 @@ def get_hourly_load(
         logger.error(f"[GET /load/hourly] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/load/comparison", response_model=List[LoadComparison], tags=["Load Data"])
+def get_load_comparison(
+    start_date: Optional[datetime] = Query(None, description="Start date"),
+    end_date: Optional[datetime] = Query(None, description="End date"),
+    region: Optional[str] = Query(None, description="Filter by specific region(s). Comma-separated for multiple regions. Options: coast, east, far_west, north, north_c, southern, south_c, west, ercot"),
+    limit: int = Query(1000, ge=1, le=10000, description="Maximum number of records to return")
+):
+    """
+    Retrieves both expected and actual electricity demand data for all ERCOT regions.
+    Joins data from staging.ercot_load_wide_expected and public.ercot_load tables.
+    Returns time-series data comparing forecasted vs actual loads ordered chronologically.
+    When region filter is applied, only returns data for the specified region(s).
+    """
+    # Parse regions if provided
+    selected_regions = None
+    if region:
+        selected_regions = [r.strip() for r in region.split(',')]
+        valid_regions = ['coast', 'east', 'far_west', 'north', 'north_c', 'southern', 'south_c', 'west', 'ercot']
+        invalid_regions = [r for r in selected_regions if r not in valid_regions]
+        if invalid_regions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid region(s): {', '.join(invalid_regions)}. Valid options are: {', '.join(valid_regions)}"
+            )
+
+    # Build SELECT clause based on region filter
+    if selected_regions:
+        select_fields = ["COALESCE(a.hour_end, e.hour_end) as hour_end"]
+        for reg in selected_regions:
+            select_fields.append(f"a.{reg} as {reg}_actual")
+            select_fields.append(f"e.{reg} as {reg}_expected")
+        select_clause = ",\n            ".join(select_fields)
+    else:
+        select_clause = """COALESCE(a.hour_end, e.hour_end) as hour_end,
+            a.coast as coast_actual,
+            e.coast as coast_expected,
+            a.east as east_actual,
+            e.east as east_expected,
+            a.far_west as far_west_actual,
+            e.far_west as far_west_expected,
+            a.north as north_actual,
+            e.north as north_expected,
+            a.north_c as north_c_actual,
+            e.north_c as north_c_expected,
+            a.southern as southern_actual,
+            e.southern as southern_expected,
+            a.south_c as south_c_actual,
+            e.south_c as south_c_expected,
+            a.west as west_actual,
+            e.west as west_expected,
+            a.ercot as ercot_actual,
+            e.ercot as ercot_expected"""
+
+    query = f"""
+        SELECT
+            {select_clause}
+        FROM public.ercot_load a
+        FULL OUTER JOIN staging.ercot_load_wide_expected e ON a.hour_end = e.hour_end
+        WHERE 1=1
+    """
+    params = []
+
+    if start_date:
+        query += " AND COALESCE(a.hour_end, e.hour_end) >= %s"
+        params.append(start_date)
+    if end_date:
+        query += " AND COALESCE(a.hour_end, e.hour_end) <= %s"
+        params.append(end_date)
+
+    query += " ORDER BY COALESCE(a.hour_end, e.hour_end) LIMIT %s"
+    params.append(limit)
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                logger.info(f"[GET /load/comparison] Query: {query}")
+                logger.info(f"[GET /load/comparison] Params: {params}")
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                logger.info(f"[GET /load/comparison] Returned {len(results)} rows")
+                return results
+    except Exception as e:
+        logger.error(f"[GET /load/comparison] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/forecast/metrics", response_model=List[ForecastMetrics], tags=["Forecast"])
 def get_forecast_metrics(
-    region: Optional[str] = Query(None, description="Filter results by specific region(s). Comma-separated for multiple regions."),
-    metric: Optional[str] = Query(None, description="Filter to return only specific metric(s). Comma-separated for multiple metrics.")
+    start_date: Optional[datetime] = Query(None, description="Start date for analysis period"),
+    end_date: Optional[datetime] = Query(None, description="End date for analysis period"),
+    region: Optional[str] = Query(None, description="Filter results by specific region(s). Comma-separated for multiple regions.")
 ):
     """
     Retrieves statistical metrics comparing forecasted vs actual electricity demand
     for each ERCOT region, including MSE, MAE, MAPE, and R-squared values.
-
-    Note: Requires forecast_metrics table/view to be created in the database.
+    Calculates metrics dynamically from staging.ercot_load_wide_compare table.
+    Always returns all metrics (n, mse, mae, mape_pct, r2).
     """
     try:
         with get_db_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Check if forecast_metrics table exists
+                # Check if ercot_load_wide_compare table exists
                 cursor.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables
-                        WHERE table_schema = 'public'
-                        AND table_name = 'forecast_metrics'
+                        WHERE table_schema = 'staging'
+                        AND table_name = 'ercot_load_wide_compare'
                     );
                 """)
                 table_exists = cursor.fetchone()['exists']
@@ -191,34 +298,73 @@ def get_forecast_metrics(
                 if not table_exists:
                     raise HTTPException(
                         status_code=501,
-                        detail="forecast_metrics table not yet implemented. Please create the table or view first."
+                        detail="staging.ercot_load_wide_compare table not yet implemented. Please create the table first."
                     )
 
-                query = "SELECT region, n, mse, mae, mape_pct, r2 FROM forecast_metrics WHERE 1=1"
-                params = []
+                # Build the base query with date filtering in the source data
+                base_filter = "WHERE 1=1"
+                base_params = []
+
+                if start_date:
+                    base_filter += f" AND hour_end >= %s"
+                    base_params.append(start_date)
+                if end_date:
+                    base_filter += f" AND hour_end <= %s"
+                    base_params.append(end_date)
+
+                query = f"""
+                    WITH filtered_data AS (
+                      SELECT * FROM staging.ercot_load_wide_compare
+                      {base_filter}
+                    ),
+                    pairs AS (
+                      SELECT 'coast' AS region, coast_actual AS y, coast_expected AS yhat
+                      FROM filtered_data
+                      UNION ALL SELECT 'east', east_actual, east_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'far_west', far_west_actual, far_west_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'north', north_actual, north_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'north_c', north_c_actual, north_c_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'southern', southern_actual, southern_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'south_c', south_c_actual, south_c_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'west', west_actual, west_expected
+                      FROM filtered_data
+                      UNION ALL SELECT 'ercot', ercot_actual, ercot_expected
+                      FROM filtered_data
+                    ),
+                    means AS (
+                      SELECT region, AVG(y) AS y_bar
+                      FROM pairs
+                      GROUP BY region
+                    )
+                    SELECT
+                      p.region,
+                      COUNT(*) AS n,
+                      AVG( (p.y - p.yhat)^2 ) AS mse,
+                      AVG( ABS(p.y - p.yhat) ) AS mae,
+                      100.0 * AVG(CASE WHEN p.y = 0 THEN NULL ELSE ABS(p.y - p.yhat) / ABS(p.y) END) AS mape_pct,
+                      1.0 - (SUM( (p.y - p.yhat)^2 ) / NULLIF(SUM( (p.y - m.y_bar)^2 ), 0)) AS r2
+                    FROM pairs p
+                    JOIN means m USING (region)
+                """
+                params = base_params.copy()
 
                 if region:
                     regions = [r.strip() for r in region.split(',')]
-                    query += " AND region = ANY(%s)"
+                    query += " WHERE p.region = ANY(%s)"
                     params.append(regions)
+
+                query += " GROUP BY p.region ORDER BY p.region"
 
                 logger.info(f"[GET /forecast/metrics] Query: {query}")
                 logger.info(f"[GET /forecast/metrics] Params: {params}")
                 cursor.execute(query, params)
                 results = cursor.fetchall()
-
-                if metric:
-                    metrics = [m.strip() for m in metric.split(',')]
-                    filtered_results = []
-                    for row in results:
-                        filtered_row = {"region": row["region"], "n": row["n"]}
-                        for m in metrics:
-                            if m in row:
-                                filtered_row[m] = row[m]
-                        filtered_results.append(filtered_row)
-                    logger.info(f"[GET /forecast/metrics] Returned {len(filtered_results)} filtered rows")
-                    return filtered_results
-
                 logger.info(f"[GET /forecast/metrics] Returned {len(results)} rows")
                 return results
     except HTTPException:
