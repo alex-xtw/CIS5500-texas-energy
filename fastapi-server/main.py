@@ -563,7 +563,6 @@ def get_peak_load_extreme_heat(
         logger.error(f"[GET /load/peak-load-extreme-heat] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-#6
 @app.get("/load/outliers/weather-conditions", response_model=LoadOutlierWeatherResponse, tags=["Load Data"])
 def get_load_outliers_weather_conditions(
     start_date: Optional[date] = Query(None, description="Start date for analysis period (UTC)"),
@@ -640,7 +639,118 @@ def get_load_outliers_weather_conditions(
         logger.error(f"[GET /load/outliers/weather-conditions] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
  
+    
 
+#7 
+@app.get("/load/daily-outliers", response_model=LoadOutlierWeatherResponse, tags=["Load Data"])
+def get_daily_load_outliers(
+    start_month: Optional[str] = Query(None, description="Start month in YYYY-MM format"),
+    end_month: Optional[str] = Query(None, description="End month in YYYY-MM format"),
+    outlier_type: Optional[Literal["high", "low"]] = Query(None, description="Filter by outlier type (high or low)"),
+    std_dev_threshold: float = Query(3.0, ge=1.0, le=5.0, description="Standard deviation threshold for defining outliers (1-5)")
+):
+    """
+    Identifies daily electricity load outliers within each month (defined as ±N standard deviations
+    from the monthly mean) and analyzes average weather conditions during those outlier days.
+    
+    Returns for each month and outlier group:
+    - Number of outlier days
+    - Average temperature, humidity, precipitation, wind speed, pressure, and cloud cover
+    
+    Note: Requires ercot_load and weather_hourly tables to exist in the database.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Build the query with the provided threshold
+                query = f"""
+                    WITH daily_load AS (
+                      SELECT
+                        (hour_end AT TIME ZONE 'UTC')::date AS day_utc,
+                        AVG(ercot) AS daily_avg_mw
+                      FROM ercot_load
+                      GROUP BY (hour_end AT TIME ZONE 'UTC')::date
+                    ),
+                    monthly_stats AS (
+                      SELECT
+                        date_trunc('month', day_utc)::date AS month_start,
+                        AVG(daily_avg_mw) AS mu,
+                        STDDEV_SAMP(daily_avg_mw) AS sigma
+                      FROM daily_load
+                      GROUP BY date_trunc('month', day_utc)::date
+                    ),
+                    outlier_days AS (
+                      SELECT
+                        dl.day_utc,
+                        ms.month_start,
+                        CASE
+                          WHEN dl.daily_avg_mw > ms.mu + {std_dev_threshold}*ms.sigma THEN 'high'
+                          WHEN dl.daily_avg_mw < ms.mu - {std_dev_threshold}*ms.sigma THEN 'low'
+                          ELSE NULL
+                        END AS outlier_group
+                      FROM daily_load dl
+                      JOIN monthly_stats ms
+                        ON ms.month_start = date_trunc('month', dl.day_utc)::date
+                    ),
+                    daily_weather AS (
+                      SELECT
+                        (wh.time AT TIME ZONE 'UTC')::date AS day_utc,
+                        AVG(wh.temperature_2m_c) AS temp_c_avg,
+                        AVG(wh.relative_humidity_2m_percent) AS rh_pct_avg,
+                        SUM(wh.precipitation_mm) AS precip_mm_sum,
+                        AVG(wh.wind_speed_10m_kmh) AS wind_10m_kmh_avg,
+                        AVG(wh.pressure_msl_hpa) AS pressure_hpa_avg,
+                        AVG(wh.cloud_cover_percent) AS cloud_cover_pct_avg
+                      FROM weather_hourly wh
+                      GROUP BY (wh.time AT TIME ZONE 'UTC')::date
+                    )
+                    SELECT
+                      od.month_start,
+                      od.outlier_group,
+                      COUNT(*) AS num_days,
+                      AVG(dw.temp_c_avg) AS avg_temp_c,
+                      AVG(dw.rh_pct_avg) AS avg_rh_pct,
+                      AVG(dw.precip_mm_sum) AS avg_precip_mm,
+                      AVG(dw.wind_10m_kmh_avg) AS avg_wind_kmh,
+                      AVG(dw.pressure_hpa_avg) AS avg_pressure_hpa,
+                      AVG(dw.cloud_cover_pct_avg) AS avg_cloud_cover_pct
+                    FROM outlier_days od
+                    JOIN daily_weather dw ON dw.day_utc = od.day_utc
+                    WHERE od.outlier_group IS NOT NULL
+                """
+                
+                params = []
+                
+                if start_month:
+                    query += " AND od.month_start >= %s"
+                    params.append(start_month + "-01")
+                if end_month:
+                    query += " AND od.month_start <= %s"
+                    params.append(end_month + "-01")
+                if outlier_type:
+                    query += " AND od.outlier_group = %s"
+                    params.append(outlier_type)
+                
+                query += " GROUP BY od.month_start, od.outlier_group ORDER BY od.month_start, od.outlier_group DESC"
+                
+                logger.info(f"[GET /load/daily-outliers] Query: {query}")
+                logger.info(f"[GET /load/daily-outliers] Params: {params}")
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                logger.info(f"[GET /load/daily-outliers] Returned {len(results)} rows")
+                
+                return {
+                    "data": results,
+                    "metadata": {
+                        "std_dev_threshold": std_dev_threshold,
+                        "description": f"Daily load outliers defined as average daily load beyond ±{std_dev_threshold}σ from monthly mean"
+                    }
+                }
+    except Exception as e:
+        logger.error(f"[GET /load/daily-outliers] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+#6
 @app.get("/load/extreme-heat-analysis", response_model=List[ExtremeHeatLoad], tags=["Load Data"])
 def get_extreme_heat_load_analysis(
     zone: Optional[str] = Query(None, description="Filter by specific ERCOT zone(s). Comma-separated for multiple zones."),
@@ -757,114 +867,3 @@ def get_extreme_heat_load_analysis(
     except Exception as e:
         logger.error(f"[GET /load/extreme-heat-analysis] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-    
-
-#7 
-@app.get("/load/daily-outliers", response_model=LoadOutlierWeatherResponse, tags=["Load Data"])
-def get_daily_load_outliers(
-    start_month: Optional[str] = Query(None, description="Start month in YYYY-MM format"),
-    end_month: Optional[str] = Query(None, description="End month in YYYY-MM format"),
-    outlier_type: Optional[Literal["high", "low"]] = Query(None, description="Filter by outlier type (high or low)"),
-    std_dev_threshold: float = Query(3.0, ge=1.0, le=5.0, description="Standard deviation threshold for defining outliers (1-5)")
-):
-    """
-    Identifies daily electricity load outliers within each month (defined as ±N standard deviations
-    from the monthly mean) and analyzes average weather conditions during those outlier days.
-    
-    Returns for each month and outlier group:
-    - Number of outlier days
-    - Average temperature, humidity, precipitation, wind speed, pressure, and cloud cover
-    
-    Note: Requires ercot_load and weather_hourly tables to exist in the database.
-    """
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Build the query with the provided threshold
-                query = f"""
-                    WITH daily_load AS (
-                      SELECT
-                        (hour_end AT TIME ZONE 'UTC')::date AS day_utc,
-                        AVG(ercot) AS daily_avg_mw
-                      FROM ercot_load
-                      GROUP BY (hour_end AT TIME ZONE 'UTC')::date
-                    ),
-                    monthly_stats AS (
-                      SELECT
-                        date_trunc('month', day_utc)::date AS month_start,
-                        AVG(daily_avg_mw) AS mu,
-                        STDDEV_SAMP(daily_avg_mw) AS sigma
-                      FROM daily_load
-                      GROUP BY date_trunc('month', day_utc)::date
-                    ),
-                    outlier_days AS (
-                      SELECT
-                        dl.day_utc,
-                        ms.month_start,
-                        CASE
-                          WHEN dl.daily_avg_mw > ms.mu + {std_dev_threshold}*ms.sigma THEN 'high'
-                          WHEN dl.daily_avg_mw < ms.mu - {std_dev_threshold}*ms.sigma THEN 'low'
-                          ELSE NULL
-                        END AS outlier_group
-                      FROM daily_load dl
-                      JOIN monthly_stats ms
-                        ON ms.month_start = date_trunc('month', dl.day_utc)::date
-                    ),
-                    daily_weather AS (
-                      SELECT
-                        (wh.time AT TIME ZONE 'UTC')::date AS day_utc,
-                        AVG(wh.temperature_2m_c) AS temp_c_avg,
-                        AVG(wh.relative_humidity_2m_percent) AS rh_pct_avg,
-                        SUM(wh.precipitation_mm) AS precip_mm_sum,
-                        AVG(wh.wind_speed_10m_kmh) AS wind_10m_kmh_avg,
-                        AVG(wh.pressure_msl_hpa) AS pressure_hpa_avg,
-                        AVG(wh.cloud_cover_percent) AS cloud_cover_pct_avg
-                      FROM weather_hourly wh
-                      GROUP BY (wh.time AT TIME ZONE 'UTC')::date
-                    )
-                    SELECT
-                      od.month_start,
-                      od.outlier_group,
-                      COUNT(*) AS num_days,
-                      AVG(dw.temp_c_avg) AS avg_temp_c,
-                      AVG(dw.rh_pct_avg) AS avg_rh_pct,
-                      AVG(dw.precip_mm_sum) AS avg_precip_mm,
-                      AVG(dw.wind_10m_kmh_avg) AS avg_wind_kmh,
-                      AVG(dw.pressure_hpa_avg) AS avg_pressure_hpa,
-                      AVG(dw.cloud_cover_pct_avg) AS avg_cloud_cover_pct
-                    FROM outlier_days od
-                    JOIN daily_weather dw ON dw.day_utc = od.day_utc
-                    WHERE od.outlier_group IS NOT NULL
-                """
-                
-                params = []
-                
-                if start_month:
-                    query += " AND od.month_start >= %s"
-                    params.append(start_month + "-01")
-                if end_month:
-                    query += " AND od.month_start <= %s"
-                    params.append(end_month + "-01")
-                if outlier_type:
-                    query += " AND od.outlier_group = %s"
-                    params.append(outlier_type)
-                
-                query += " GROUP BY od.month_start, od.outlier_group ORDER BY od.month_start, od.outlier_group DESC"
-                
-                logger.info(f"[GET /load/daily-outliers] Query: {query}")
-                logger.info(f"[GET /load/daily-outliers] Params: {params}")
-                cursor.execute(query, params)
-                results = cursor.fetchall()
-                logger.info(f"[GET /load/daily-outliers] Returned {len(results)} rows")
-                
-                return {
-                    "data": results,
-                    "metadata": {
-                        "std_dev_threshold": std_dev_threshold,
-                        "description": f"Daily load outliers defined as average daily load beyond ±{std_dev_threshold}σ from monthly mean"
-                    }
-                }
-    except Exception as e:
-        logger.error(f"[GET /load/daily-outliers] Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
