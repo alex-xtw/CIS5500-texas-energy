@@ -563,6 +563,7 @@ def get_peak_load_extreme_heat(
         logger.error(f"[GET /load/peak-load-extreme-heat] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+#6
 @app.get("/load/outliers/weather-conditions", response_model=LoadOutlierWeatherResponse, tags=["Load Data"])
 def get_load_outliers_weather_conditions(
     start_date: Optional[date] = Query(None, description="Start date for analysis period (UTC)"),
@@ -638,3 +639,232 @@ def get_load_outliers_weather_conditions(
     except Exception as e:
         logger.error(f"[GET /load/outliers/weather-conditions] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+ 
+
+@app.get("/load/extreme-heat-analysis", response_model=List[ExtremeHeatLoad], tags=["Load Data"])
+def get_extreme_heat_load_analysis(
+    zone: Optional[str] = Query(None, description="Filter by specific ERCOT zone(s). Comma-separated for multiple zones."),
+    percentile_threshold: float = Query(99.0, ge=50, le=100, description="Percentile threshold for extreme heat definition (50-100)")
+):
+    """
+    Analyzes electricity demand during extreme heat conditions by identifying the hottest days
+    in each zone (defined by percentile threshold of daily max temperature) and calculating
+    the median peak load during those extreme heat days.
+    
+    Returns for each zone:
+    - Median daily peak load during extreme heat days (MW)
+    - Number of days qualifying as extreme heat
+    - Temperature threshold (percentile) and actual temperature value
+    
+    Note: Requires weather_hourly, station_zone_map, and ercot_load tables to exist in the database.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Check if required tables exist
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        AND table_name = 'weather_hourly'
+                    )
+                    AND EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        AND table_name = 'station_zone_map'
+                    )
+                    AND EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        AND table_name = 'ercot_load'
+                    );
+                """)
+                tables_exist = cursor.fetchone()['exists']
+
+                if not tables_exist:
+                    raise HTTPException(
+                        status_code=501,
+                        detail="Required tables (weather_hourly, station_zone_map, ercot_load) not found in database."
+                    )
+
+                query = f"""
+                    WITH weather_zone_daily AS (
+                      SELECT
+                        (wh.time AT TIME ZONE 'UTC')::date AS day_utc,
+                        szm.zone_code,
+                        MAX((wh.temperature_2m_c * 9.0/5.0) + 32.0) AS temp_max_f
+                      FROM weather_hourly wh
+                      JOIN station_zone_map szm
+                        ON szm.station_id = wh.station_id
+                      GROUP BY (wh.time AT TIME ZONE 'UTC')::date, szm.zone_code
+                    ),
+                    daily_peak_load AS (
+                      SELECT
+                        (el.hour_end AT TIME ZONE 'UTC')::date AS day_utc,
+                        z.zone_code,
+                        MAX(z.load_mw) AS daily_peak_mw
+                      FROM ercot_load el
+                      CROSS JOIN LATERAL (
+                        VALUES
+                          ('coast',   el.coast),
+                          ('east',    el.east),
+                          ('far_west',el.far_west),
+                          ('north',   el.north),
+                          ('north_c', el.north_c),
+                          ('southern',el.southern),
+                          ('south_c', el.south_c),
+                          ('west',    el.west)
+                      ) AS z(zone_code, load_mw)
+                      GROUP BY (el.hour_end AT TIME ZONE 'UTC')::date, z.zone_code
+                    ),
+                    hot_cutoff AS (
+                      SELECT
+                        zone_code,
+                        percentile_cont(%s) WITHIN GROUP (ORDER BY temp_max_f) AS p_threshold_temp_f
+                      FROM weather_zone_daily
+                      GROUP BY zone_code
+                    )
+                    SELECT
+                      wzd.zone_code,
+                      percentile_cont(0.5) WITHIN GROUP (ORDER BY dpl.daily_peak_mw) AS median_peak_load_mw,
+                      COUNT(*) AS num_extreme_heat_days,
+                      %s AS threshold_percentile,
+                      hc.p_threshold_temp_f AS threshold_temp_f
+                    FROM weather_zone_daily wzd
+                    JOIN hot_cutoff hc USING (zone_code)
+                    JOIN daily_peak_load dpl USING (zone_code, day_utc)
+                    WHERE wzd.temp_max_f >= hc.p_threshold_temp_f
+                """
+                
+                params = [(percentile_threshold / 100.0), percentile_threshold]
+                
+                if zone:
+                    zones = [z.strip() for z in zone.split(',')]
+                    query += " AND wzd.zone_code = ANY(%s)"
+                    params.append(zones)
+                
+                query += " GROUP BY wzd.zone_code, hc.p_threshold_temp_f ORDER BY wzd.zone_code"
+                
+                logger.info(f"[GET /load/extreme-heat-analysis] Query: {query}")
+                logger.info(f"[GET /load/extreme-heat-analysis] Params: {params}")
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                logger.info(f"[GET /load/extreme-heat-analysis] Returned {len(results)} rows")
+                
+                return results
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[GET /load/extreme-heat-analysis] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+#7 
+@app.get("/load/daily-outliers", response_model=LoadOutlierWeatherResponse, tags=["Load Data"])
+def get_daily_load_outliers(
+    start_month: Optional[str] = Query(None, description="Start month in YYYY-MM format"),
+    end_month: Optional[str] = Query(None, description="End month in YYYY-MM format"),
+    outlier_type: Optional[Literal["high", "low"]] = Query(None, description="Filter by outlier type (high or low)"),
+    std_dev_threshold: float = Query(3.0, ge=1.0, le=5.0, description="Standard deviation threshold for defining outliers (1-5)")
+):
+    """
+    Identifies daily electricity load outliers within each month (defined as ±N standard deviations
+    from the monthly mean) and analyzes average weather conditions during those outlier days.
+    
+    Returns for each month and outlier group:
+    - Number of outlier days
+    - Average temperature, humidity, precipitation, wind speed, pressure, and cloud cover
+    
+    Note: Requires ercot_load and weather_hourly tables to exist in the database.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Build the query with the provided threshold
+                query = f"""
+                    WITH daily_load AS (
+                      SELECT
+                        (hour_end AT TIME ZONE 'UTC')::date AS day_utc,
+                        AVG(ercot) AS daily_avg_mw
+                      FROM ercot_load
+                      GROUP BY (hour_end AT TIME ZONE 'UTC')::date
+                    ),
+                    monthly_stats AS (
+                      SELECT
+                        date_trunc('month', day_utc)::date AS month_start,
+                        AVG(daily_avg_mw) AS mu,
+                        STDDEV_SAMP(daily_avg_mw) AS sigma
+                      FROM daily_load
+                      GROUP BY date_trunc('month', day_utc)::date
+                    ),
+                    outlier_days AS (
+                      SELECT
+                        dl.day_utc,
+                        ms.month_start,
+                        CASE
+                          WHEN dl.daily_avg_mw > ms.mu + {std_dev_threshold}*ms.sigma THEN 'high'
+                          WHEN dl.daily_avg_mw < ms.mu - {std_dev_threshold}*ms.sigma THEN 'low'
+                          ELSE NULL
+                        END AS outlier_group
+                      FROM daily_load dl
+                      JOIN monthly_stats ms
+                        ON ms.month_start = date_trunc('month', dl.day_utc)::date
+                    ),
+                    daily_weather AS (
+                      SELECT
+                        (wh.time AT TIME ZONE 'UTC')::date AS day_utc,
+                        AVG(wh.temperature_2m_c) AS temp_c_avg,
+                        AVG(wh.relative_humidity_2m_percent) AS rh_pct_avg,
+                        SUM(wh.precipitation_mm) AS precip_mm_sum,
+                        AVG(wh.wind_speed_10m_kmh) AS wind_10m_kmh_avg,
+                        AVG(wh.pressure_msl_hpa) AS pressure_hpa_avg,
+                        AVG(wh.cloud_cover_percent) AS cloud_cover_pct_avg
+                      FROM weather_hourly wh
+                      GROUP BY (wh.time AT TIME ZONE 'UTC')::date
+                    )
+                    SELECT
+                      od.month_start,
+                      od.outlier_group,
+                      COUNT(*) AS num_days,
+                      AVG(dw.temp_c_avg) AS avg_temp_c,
+                      AVG(dw.rh_pct_avg) AS avg_rh_pct,
+                      AVG(dw.precip_mm_sum) AS avg_precip_mm,
+                      AVG(dw.wind_10m_kmh_avg) AS avg_wind_kmh,
+                      AVG(dw.pressure_hpa_avg) AS avg_pressure_hpa,
+                      AVG(dw.cloud_cover_pct_avg) AS avg_cloud_cover_pct
+                    FROM outlier_days od
+                    JOIN daily_weather dw ON dw.day_utc = od.day_utc
+                    WHERE od.outlier_group IS NOT NULL
+                """
+                
+                params = []
+                
+                if start_month:
+                    query += " AND od.month_start >= %s"
+                    params.append(start_month + "-01")
+                if end_month:
+                    query += " AND od.month_start <= %s"
+                    params.append(end_month + "-01")
+                if outlier_type:
+                    query += " AND od.outlier_group = %s"
+                    params.append(outlier_type)
+                
+                query += " GROUP BY od.month_start, od.outlier_group ORDER BY od.month_start, od.outlier_group DESC"
+                
+                logger.info(f"[GET /load/daily-outliers] Query: {query}")
+                logger.info(f"[GET /load/daily-outliers] Params: {params}")
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                logger.info(f"[GET /load/daily-outliers] Returned {len(results)} rows")
+                
+                return {
+                    "data": results,
+                    "metadata": {
+                        "std_dev_threshold": std_dev_threshold,
+                        "description": f"Daily load outliers defined as average daily load beyond ±{std_dev_threshold}σ from monthly mean"
+                    }
+                }
+    except Exception as e:
+        logger.error(f"[GET /load/daily-outliers] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
