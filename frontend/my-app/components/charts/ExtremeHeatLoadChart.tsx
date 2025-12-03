@@ -9,6 +9,11 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { DateRange } from "../../contexts/DateFilterContext";
+
+interface ExtremeHeatLoadChartProps {
+  dateRange: DateRange;
+}
 
 const data = [
   { day: "Day 1", load: 3400 },
@@ -18,7 +23,7 @@ const data = [
   { day: "Day 5", load: 3650 },
 ];
 
-export function ExtremeHeatLoadChart() {
+export function ExtremeHeatLoadChart({ dateRange }: ExtremeHeatLoadChartProps) {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>

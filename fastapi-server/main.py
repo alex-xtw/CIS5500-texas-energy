@@ -160,8 +160,7 @@ class LoadComparison(BaseModel):
 @app.get("/load/hourly", response_model=List[HourlyLoadData], tags=["Load Data"])
 def get_hourly_load(
     start_date: Optional[datetime] = Query(None, description="Start date"),
-    end_date: Optional[datetime] = Query(None, description="End date"),
-    limit: int = Query(1000, ge=1, le=10000, description="Maximum number of records to return")
+    end_date: Optional[datetime] = Query(None, description="End date")
 ):
     """
     Retrieves hourly electricity demand data aggregated across all ERCOT regions.
@@ -181,8 +180,7 @@ def get_hourly_load(
         query += " AND hour_end <= %s"
         params.append(end_date)
 
-    query += " ORDER BY hour_end LIMIT %s"
-    params.append(limit)
+    query += " ORDER BY hour_end"
 
     try:
         with get_db_connection() as conn:
@@ -201,8 +199,7 @@ def get_hourly_load(
 def get_load_comparison(
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
-    region: Optional[str] = Query(None, description="Filter by specific region(s). Comma-separated for multiple regions. Options: coast, east, far_west, north, north_c, southern, south_c, west, ercot"),
-    limit: int = Query(1000, ge=1, le=10000, description="Maximum number of records to return")
+    region: Optional[str] = Query(None, description="Filter by specific region(s). Comma-separated for multiple regions. Options: coast, east, far_west, north, north_c, southern, south_c, west, ercot")
 ):
     """
     Retrieves both expected and actual electricity demand data for all ERCOT regions.
@@ -266,8 +263,7 @@ def get_load_comparison(
         query += " AND COALESCE(a.hour_end, e.hour_end) <= %s"
         params.append(end_date)
 
-    query += " ORDER BY COALESCE(a.hour_end, e.hour_end) LIMIT %s"
-    params.append(limit)
+    query += " ORDER BY COALESCE(a.hour_end, e.hour_end)"
 
     try:
         with get_db_connection() as conn:

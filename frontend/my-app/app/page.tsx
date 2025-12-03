@@ -3,15 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { LoadByRegionChart } from "../../../components/charts/LoadByRegionChart";
-import { HeatwavesByZoneChart } from "../../../components/charts/HeatwavesByZoneChart";
-import { ExtremeHeatLoadChart } from "../../../components/charts/ExtremeHeatLoadChart";
-import { DryVsRainyChart } from "../../../components/charts/DryVsRainyChart";
+import { LoadByRegionChart } from "../components/charts/LoadByRegionChart";
+import { HeatwavesByZoneChart } from "../components/charts/HeatwavesByZoneChart";
+import { ExtremeHeatLoadTable } from "../components/charts/ExtremeHeatLoadTable";
+import { DryVsRainyChart } from "../components/charts/DryVsRainyChart";
+import { DateRangeFilter } from "../components/filters/DateRangeFilter";
+import { useDateFilter } from "../contexts/DateFilterContext";
 
 type Region = "all" | "North" | "South" | "West" | "Houston";
 
 export default function Home() {
   const router = useRouter();
+  const { dateRange } = useDateFilter();
 
   // filter state
   const [regionForHourly, setRegionForHourly] = useState<Region>("all");
@@ -84,6 +87,11 @@ export default function Home() {
 
       {/* Main content area */}
       <main className="p-8">
+        {/* Date Filter */}
+        <div className="mb-6">
+          <DateRangeFilter />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-10">
           {/* Top Left – has region filter */}
           <div className="h-80 rounded-xl border border-[#d3dbe8] bg-white flex flex-col pt-4 px-4 shadow-sm">
@@ -91,7 +99,10 @@ export default function Home() {
               Electricity Hourly Load by Region
             </span>
             <div className="flex-1">
-              <LoadByRegionChart selectedRegion={regionForHourly} />
+              <LoadByRegionChart
+                selectedRegion={regionForHourly}
+                dateRange={dateRange}
+              />
             </div>
             <div className="mt-3 flex justify-start items-center">
               <label className="mr-2 text-xs text-gray-600">Region:</label>
@@ -117,7 +128,10 @@ export default function Home() {
               ERCOT Heatwave Strikes by Zone
             </span>
             <div className="flex-1">
-              <HeatwavesByZoneChart selectedZone={zoneForHeatwaves} />
+              <HeatwavesByZoneChart
+                selectedZone={zoneForHeatwaves}
+                dateRange={dateRange}
+              />
             </div>
             <div className="mt-3 flex justify-start items-center">
               <label className="mr-2 text-xs text-gray-600">Zone:</label>
@@ -142,8 +156,8 @@ export default function Home() {
             <span className="text-[#011F5B] font-semibold text-center mb-2">
               Electricity Load on Extreme-Heat Days
             </span>
-            <div className="flex-1">
-              <ExtremeHeatLoadChart />
+            <div className="flex-1 overflow-hidden">
+              <ExtremeHeatLoadTable dateRange={dateRange} />
             </div>
           </div>
 
@@ -153,7 +167,10 @@ export default function Home() {
               Average Electricity Load for Dry vs. Rainy Days
             </span>
             <div className="flex-1">
-              <DryVsRainyChart selectedRegion={regionForDryRainy} />
+              <DryVsRainyChart
+                selectedRegion={regionForDryRainy}
+                dateRange={dateRange}
+              />
             </div>
             <div className="mt-3 flex justify-start items-center">
               <label className="mr-2 text-xs text-gray-600">Region:</label>

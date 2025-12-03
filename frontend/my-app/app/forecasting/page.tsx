@@ -3,14 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { HistoricalForecastCard } from "../../../../components/forecasting/HistoricalForecastCard";
-import { MetricsCard } from "../../../../components/forecasting/MetricsCard";
-import { OutlierDetectionCard } from "../../../../components/forecasting/OutlierDetectionCard";
-import { ForecastConfigCard } from "../../../../components/forecasting/ForecastConfigCard";
+import { HistoricalForecastCard } from "../../components/forecasting/HistoricalForecastCard";
+import { MetricsCard } from "../../components/forecasting/MetricsCard";
+import { OutlierDetectionCard } from "../../components/forecasting/OutlierDetectionCard";
+import { ForecastConfigCard } from "../../components/forecasting/ForecastConfigCard";
+import { DateRangeFilter } from "../../components/filters/DateRangeFilter";
+import { useDateFilter } from "../../contexts/DateFilterContext";
 
 
 export default function ForecastingPage() {
   const router = useRouter();
+  const { dateRange } = useDateFilter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const handleAnalysisClick = () => {
@@ -76,11 +79,16 @@ export default function ForecastingPage() {
 
       {/* Main content */}
       <main className="p-8">
+        {/* Date Filter */}
+        <div className="mb-6">
+          <DateRangeFilter />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-10">
-          <HistoricalForecastCard />
-          <MetricsCard />
-          <OutlierDetectionCard />
-          <ForecastConfigCard />
+          <HistoricalForecastCard dateRange={dateRange} />
+          <MetricsCard dateRange={dateRange} />
+          <OutlierDetectionCard dateRange={dateRange} />
+          <ForecastConfigCard dateRange={dateRange} />
         </div>
       </main>
     </div>
