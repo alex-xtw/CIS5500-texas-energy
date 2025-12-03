@@ -199,14 +199,26 @@ def get_hourly_load(
 def get_load_comparison(
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
-    region: Optional[str] = Query(None, description="Filter by specific region(s). Comma-separated for multiple regions. Options: coast, east, far_west, north, north_c, southern, south_c, west, ercot")
+    region: Optional[str] = Query(None, description="Filter by specific region(s). Comma-separated for multiple regions. Options: coast, east, far_west, north, north_c, southern, south_c, west, ercot"),
+    model: str = Query("statistical", description="Model type to use for comparison. Options: 'statistical' (default) or 'xgb'")
 ):
     """
     Retrieves both expected and actual electricity demand data for all ERCOT regions.
-    Joins data from staging.ercot_load_wide_expected and public.ercot_load tables.
+    Uses either staging.ercot_load_wide_compare (statistical model) or staging.ercot_load_wide_compare_xgb (XGBoost model).
     Returns time-series data comparing forecasted vs actual loads ordered chronologically.
     When region filter is applied, only returns data for the specified region(s).
     """
+    # Validate model parameter
+    valid_models = ['statistical', 'xgb']
+    if model not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model: {model}. Valid options are: {', '.join(valid_models)}"
+        )
+
+    # Select the appropriate comparison table based on model
+    compare_table = "staging.ercot_load_wide_compare" if model == "statistical" else "staging.ercot_load_wide_compare_xgb"
+
     # Parse regions if provided
     selected_regions = None
     if region:
@@ -221,49 +233,48 @@ def get_load_comparison(
 
     # Build SELECT clause based on region filter
     if selected_regions:
-        select_fields = ["COALESCE(a.hour_end, e.hour_end) as hour_end"]
+        select_fields = ["hour_end"]
         for reg in selected_regions:
-            select_fields.append(f"a.{reg} as {reg}_actual")
-            select_fields.append(f"e.{reg} as {reg}_expected")
+            select_fields.append(f"{reg}_actual")
+            select_fields.append(f"{reg}_expected")
         select_clause = ",\n            ".join(select_fields)
     else:
-        select_clause = """COALESCE(a.hour_end, e.hour_end) as hour_end,
-            a.coast as coast_actual,
-            e.coast as coast_expected,
-            a.east as east_actual,
-            e.east as east_expected,
-            a.far_west as far_west_actual,
-            e.far_west as far_west_expected,
-            a.north as north_actual,
-            e.north as north_expected,
-            a.north_c as north_c_actual,
-            e.north_c as north_c_expected,
-            a.southern as southern_actual,
-            e.southern as southern_expected,
-            a.south_c as south_c_actual,
-            e.south_c as south_c_expected,
-            a.west as west_actual,
-            e.west as west_expected,
-            a.ercot as ercot_actual,
-            e.ercot as ercot_expected"""
+        select_clause = """hour_end,
+            coast_actual,
+            coast_expected,
+            east_actual,
+            east_expected,
+            far_west_actual,
+            far_west_expected,
+            north_actual,
+            north_expected,
+            north_c_actual,
+            north_c_expected,
+            southern_actual,
+            southern_expected,
+            south_c_actual,
+            south_c_expected,
+            west_actual,
+            west_expected,
+            ercot_actual,
+            ercot_expected"""
 
     query = f"""
         SELECT
             {select_clause}
-        FROM public.ercot_load a
-        FULL OUTER JOIN staging.ercot_load_wide_expected e ON a.hour_end = e.hour_end
+        FROM {compare_table}
         WHERE 1=1
     """
     params = []
 
     if start_date:
-        query += " AND COALESCE(a.hour_end, e.hour_end) >= %s"
+        query += " AND hour_end >= %s"
         params.append(start_date)
     if end_date:
-        query += " AND COALESCE(a.hour_end, e.hour_end) <= %s"
+        query += " AND hour_end <= %s"
         params.append(end_date)
 
-    query += " ORDER BY COALESCE(a.hour_end, e.hour_end)"
+    query += " ORDER BY hour_end"
 
     try:
         with get_db_connection() as conn:
@@ -282,31 +293,44 @@ def get_load_comparison(
 def get_forecast_metrics(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis period"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis period"),
-    region: Optional[str] = Query(None, description="Filter results by specific region(s). Comma-separated for multiple regions.")
+    region: Optional[str] = Query(None, description="Filter results by specific region(s). Comma-separated for multiple regions."),
+    model: str = Query("statistical", description="Model type to use for metrics calculation. Options: 'statistical' (default) or 'xgb'")
 ):
     """
     Retrieves statistical metrics comparing forecasted vs actual electricity demand
     for each ERCOT region, including MSE, MAE, MAPE, and R-squared values.
-    Calculates metrics dynamically from staging.ercot_load_wide_compare table.
+    Uses either staging.ercot_load_wide_compare (statistical model) or staging.ercot_load_wide_compare_xgb (XGBoost model).
     Always returns all metrics (n, mse, mae, mape_pct, r2).
     """
+    # Validate model parameter
+    valid_models = ['statistical', 'xgb']
+    if model not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model: {model}. Valid options are: {', '.join(valid_models)}"
+        )
+
+    # Select the appropriate comparison table based on model
+    compare_table = "staging.ercot_load_wide_compare" if model == "statistical" else "staging.ercot_load_wide_compare_xgb"
+
     try:
         with get_db_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Check if ercot_load_wide_compare table exists
+                # Check if the selected comparison table exists
+                table_name = compare_table.split('.')[1]
                 cursor.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables
                         WHERE table_schema = 'staging'
-                        AND table_name = 'ercot_load_wide_compare'
+                        AND table_name = %s
                     );
-                """)
+                """, (table_name,))
                 table_exists = cursor.fetchone()['exists']
 
                 if not table_exists:
                     raise HTTPException(
                         status_code=501,
-                        detail="staging.ercot_load_wide_compare table not yet implemented. Please create the table first."
+                        detail=f"{compare_table} table not yet implemented. Please create the table first."
                     )
 
                 # Build the base query with date filtering in the source data
@@ -322,7 +346,7 @@ def get_forecast_metrics(
 
                 query = f"""
                     WITH filtered_data AS (
-                      SELECT * FROM staging.ercot_load_wide_compare
+                      SELECT * FROM {compare_table}
                       {base_filter}
                     ),
                     pairs AS (

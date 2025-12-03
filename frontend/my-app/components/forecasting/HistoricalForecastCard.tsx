@@ -18,6 +18,7 @@ type Region = "North" | "South" | "West" | "Houston" | "All";
 
 interface HistoricalForecastCardProps {
   dateRange: DateRange;
+  selectedModel: string;
 }
 
 interface LoadComparison {
@@ -52,7 +53,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const regionOptions: Region[] = ["All", "North", "South", "West", "Houston"];
 
-export function HistoricalForecastCard({ dateRange }: HistoricalForecastCardProps) {
+export function HistoricalForecastCard({ dateRange, selectedModel }: HistoricalForecastCardProps) {
   const [selectedRegion, setSelectedRegion] = useState<Region>("All");
   const [data, setData] = useState<Record<Region, ChartDataPoint[]>>({
     All: [],
@@ -79,6 +80,11 @@ export function HistoricalForecastCard({ dateRange }: HistoricalForecastCardProp
         if (dateRange.endDate) {
           params.append("end_date", `${dateRange.endDate}T23:59:59`);
         }
+
+        // Map frontend model names to API parameter values
+        const modelParam = selectedModel === "Statistical Model" ? "statistical" :
+                          selectedModel === "XGBoost" ? "xgb" : "statistical";
+        params.append("model", modelParam);
 
         const response = await fetch(
           `${API_BASE_URL}/load/comparison?${params.toString()}`
@@ -192,7 +198,7 @@ export function HistoricalForecastCard({ dateRange }: HistoricalForecastCardProp
     };
 
     fetchData();
-  }, [dateRange]);
+  }, [dateRange, selectedModel]);
 
   const chartData = data[selectedRegion] || [];
 

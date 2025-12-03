@@ -7,6 +7,7 @@ type Region = "North" | "South" | "West" | "Houston" | "All";
 
 interface MetricsCardProps {
   dateRange: DateRange;
+  selectedModel: string;
 }
 
 interface ForecastMetrics {
@@ -42,7 +43,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const regionOptions: Region[] = ["All", "North", "South", "West", "Houston"];
 
-export function MetricsCard({ dateRange }: MetricsCardProps) {
+export function MetricsCard({ dateRange, selectedModel }: MetricsCardProps) {
   const [metricsRegion, setMetricsRegion] = useState<Region>("All");
   const [data, setData] = useState<DisplayMetrics[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,6 +63,11 @@ export function MetricsCard({ dateRange }: MetricsCardProps) {
         if (dateRange.endDate) {
           params.append("end_date", `${dateRange.endDate}T23:59:59`);
         }
+
+        // Map frontend model names to API parameter values
+        const modelParam = selectedModel === "Statistical Model" ? "statistical" :
+                          selectedModel === "XGBoost" ? "xgb" : "statistical";
+        params.append("model", modelParam);
 
         const response = await fetch(
           `${API_BASE_URL}/forecast/metrics?${params.toString()}`
@@ -124,7 +130,7 @@ export function MetricsCard({ dateRange }: MetricsCardProps) {
     };
 
     fetchData();
-  }, [dateRange]);
+  }, [dateRange, selectedModel]);
 
   const metricsData =
     metricsRegion === "All"

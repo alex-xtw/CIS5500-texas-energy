@@ -15,6 +15,7 @@ export default function ForecastingPage() {
   const router = useRouter();
   const { dateRange } = useDateFilter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("Statistical Model");
 
   const handleAnalysisClick = () => {
     router.push("/"); // back to analysis page
@@ -85,10 +86,10 @@ export default function ForecastingPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-10">
-          <HistoricalForecastCard dateRange={dateRange} />
-          <MetricsCard dateRange={dateRange} />
+          <HistoricalForecastCard dateRange={dateRange} selectedModel={selectedModel} />
+          <MetricsCard dateRange={dateRange} selectedModel={selectedModel} />
           <OutlierDetectionCard dateRange={dateRange} />
-          <ForecastConfigCard dateRange={dateRange} />
+          <ForecastConfigCard dateRange={dateRange} selectedModel={selectedModel} onModelChange={setSelectedModel} />
         </div>
       </main>
     </div>
