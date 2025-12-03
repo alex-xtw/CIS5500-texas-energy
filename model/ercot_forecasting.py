@@ -31,6 +31,7 @@ def load_ercot_data():
     query = """
         SELECT hour_end, ercot
         FROM ercot_load
+        WHERE HOUR_END >= '2009-01-01'
         ORDER BY hour_end;
     """
     df = pd.read_sql(query, engine)
@@ -49,7 +50,7 @@ def run_prophet(df):
     model = Prophet()
     model.fit(df)
 
-    future = model.make_future_dataframe(periods=48, freq="H")
+    future = df["ds"]
     forecast = model.predict(future)
 
     return model, forecast
@@ -60,7 +61,7 @@ def run_arima(df):
     series = df["ercot"].astype(float)
     model = ARIMA(series, order=(5,1,2))
     model_fit = model.fit()
-    forecast = model_fit.forecast(steps=48)
+    forecast = model_fit.predict(start=0, end=len(df)-1)
     return model_fit, forecast
 
 # Compute metrics for Prophet
@@ -76,14 +77,14 @@ def main():
     df = load_ercot_data()
 
     # Split for evaluation
-    train = df.iloc[:-48]
-    test = df.iloc[-48:]
+    train = df
+    test = df
 
     # Prophet Forecasting
     print("Running Prophet model...")
     prophet_train = prepare_prophet(train)
     prophet_model, prophet_forecast = run_prophet(prophet_train)
-    prophet_pred = prophet_forecast.iloc[-48:]["yhat"].values
+    prophet_pred = prophet_forecast["yhat"].values
     prophet_mae, prophet_rmse = compute_metrics(test["ercot"].values, prophet_pred)
 
     print(f"Prophet MAE: {prophet_mae:.2f}")
